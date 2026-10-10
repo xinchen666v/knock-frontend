@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../session/session.dart';
 import 'invite_page.dart';
 
@@ -10,8 +12,23 @@ class WelcomePage extends StatefulWidget {
   State<WelcomePage> createState() => _WelcomePageState();
 }
 
-class _WelcomePageState  extends State<WelcomePage> {
+class _WelcomePageState extends State<WelcomePage> {
   bool _busy = false;
+  String? _lastPeerLink;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastPeer();
+  }
+
+  Future<void> _loadLastPeer() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _lastPeerLink = prefs.getString('last_peer_link');
+    });
+  }
 
   Future<void> _onJoin(BuildContext context) async {
     final link = await showDialog<String>(
@@ -23,15 +40,17 @@ class _WelcomePageState  extends State<WelcomePage> {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => InvitePage(joinLink: link.trim()),
     ));
+    if (mounted) _loadLastPeer();
   }
 
   void _onCreate(BuildContext context) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => const InvitePage(),
     ));
+    if (mounted) _loadLastPeer();// ← 从上层回来，重读 prefs
   }
 
-    /// 隐藏入口：长按 logo 重置身份
+  /// 隐藏入口：长按 logo 重置身份
   Future<void> _onResetIdentity(BuildContext context) async {
     if (_busy) return;
     final session = context.read<Session>();
@@ -68,10 +87,16 @@ class _WelcomePageState  extends State<WelcomePage> {
     // 导航到创建流程——createSession 发现 prefs 里没有 qid，自动 NEW
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => const InvitePage(),
-    ));
+    )).then((_){if(mounted) _loadLastPeer();});
     setState(() => _busy = false);
   }
-  
+
+  void _onContinueLast(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => InvitePage(joinLink: _lastPeerLink!),
+    ));
+    if (mounted) _loadLastPeer();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -120,6 +145,16 @@ class _WelcomePageState  extends State<WelcomePage> {
                     onPressed: () => _onJoin(context),
                     child: const Text('我有邀请链接'),
                   ),
+                  if (_lastPeerLink != null) ...[
+                    // ← 新增整块
+                    const SizedBox(height: 24),
+                    TextButton.icon(
+                      onPressed: _busy ? null : () => _onContinueLast(context),
+                      icon: const Icon(Icons.history_outlined, size: 18),
+                      label:
+                          const Text('继续上次对话', style: TextStyle(fontSize: 13)),
+                    ),
+                  ],
                   const SizedBox(height: 48),
                   Text(
                     'v0.1 · knock protocol',

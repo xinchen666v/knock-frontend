@@ -215,6 +215,11 @@ class Session extends ChangeNotifier {
       peerQid = invite.queueId;
       peerStatus = PeerStatus.waiting;
       _setPhase(SessionPhase.chatting);
+
+      // 记住最近的对话，欢迎页提供"继续上次对话"入口
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_peer_link', peerLink.trim());
+
       return true;
     } catch (e) {
       errorMessage = e.toString();
@@ -599,6 +604,7 @@ Future<void> resetIdentity() async {
   // 2. 清身份：只删 qid，不动服务器配置
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove('my_qid');
+  await prefs.remove('last_peer_link');
   myQid = null;
 
   // 3. 回到初始态（_setPhase 内部会 notifyListeners）
