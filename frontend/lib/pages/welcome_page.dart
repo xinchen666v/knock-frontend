@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../session/session.dart';
 import 'invite_page.dart';
 
-class WelcomePage extends StatelessWidget {
+class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
+  @override
+  State<WelcomePage> createState() => _WelcomePageState();
+}
+
+class _WelcomePageState  extends State<WelcomePage> {
+  bool _busy = false;
 
   Future<void> _onJoin(BuildContext context) async {
     final link = await showDialog<String>(
@@ -23,6 +31,48 @@ class WelcomePage extends StatelessWidget {
     ));
   }
 
+    /// 隐藏入口：长按 logo 重置身份
+  Future<void> _onResetIdentity(BuildContext context) async {
+    if (_busy) return;
+    final session = context.read<Session>();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重置身份？'),
+        content: const Text(
+          '当前的邀请链接将作废，之后会生成一扇新的门。\n\n'
+          '对方手里的旧链接将无法再联系到你，'
+          '需要把你重新分享新的邀请链接。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.tonal(
+            style: FilledButton.styleFrom(
+              foregroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('重置'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busy = true);
+    await session.resetIdentity();
+    if (!mounted) return;
+    // 导航到创建流程——createSession 发现 prefs 里没有 qid，自动 NEW
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const InvitePage(),
+    ));
+    setState(() => _busy = false);
+  }
+  
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -36,10 +86,14 @@ class WelcomePage extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.door_front_door_outlined,
-                    size: 72,
-                    color: theme.colorScheme.primary,
+                  // ★ logo 包上 GestureDetector，长按触发重置
+                  GestureDetector(
+                    onLongPress: () => _onResetIdentity(context),
+                    child: const Icon(
+                      Icons.door_front_door_outlined,
+                      size: 72,
+                      color: Color(0xFF4A6FA5),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   Text(

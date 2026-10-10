@@ -27,31 +27,54 @@ class _InvitePageState extends State<InvitePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _initialize());
   }
 
+  // Future<void> _initialize() async {
+  //   if (_didInit) return;
+  //   _didInit = true;
+
+  //   final session = context.read<Session>();
+
+  //   // // 无论哪种模式，都先建自己的队列
+  //   // final ok = await session.createSession();
+  //   // if (!ok || !mounted) return;
+
+  //   // 加入模式：已经拿到对方链接，自动订阅
+  //   if (widget.joinLink != null) {
+  //     setState(() => _busy = true);
+  //     final subOk = await session.subscribeToPeer(widget.joinLink!);
+  //     if (!mounted) return;
+  //     setState(() => _busy = false);
+  //     if (subOk) {
+  //       _goToChat();
+  //     } else {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(content: Text(session.errorMessage ?? '订阅失败')),
+  //       );
+  //     }
+  //   }
+  // }
   Future<void> _initialize() async {
-    if (_didInit) return;
-    _didInit = true;
+  if (_didInit) return;
+  _didInit = true;
+  final session = context.read<Session>();
 
-    final session = context.read<Session>();
-
-    // 无论哪种模式，都先建自己的队列
+  if (widget.joinLink != null) {
+    setState(() => _busy = true);
+    final subOk = await session.subscribeToPeer(widget.joinLink!);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (subOk) {
+      _goToChat();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(session.errorMessage ?? '订阅失败')),
+      );
+    }
+  } else {
     final ok = await session.createSession();
     if (!ok || !mounted) return;
-
-    // 加入模式：已经拿到对方链接，自动订阅
-    if (widget.joinLink != null) {
-      setState(() => _busy = true);
-      final subOk = await session.subscribeToPeer(widget.joinLink!);
-      if (!mounted) return;
-      setState(() => _busy = false);
-      if (subOk) {
-        _goToChat();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(session.errorMessage ?? '订阅失败')),
-        );
-      }
-    }
   }
+}
+
 
   Future<void> _onConnect() async {
     final link = _peerController.text.trim();

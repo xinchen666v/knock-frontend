@@ -73,7 +73,8 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('结束这次会话？'),
-        content: const Text('断开后，本次会话将不可恢复。'),
+        // content: const Text('断开后，本次会话将不可恢复。'),
+        content: const Text('连接将断开。你的邀请链接依然有效，重新打开 App 即可继续。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),

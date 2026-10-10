@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../protocol/invite.dart';
 import '../protocol/protocol.dart';
@@ -77,34 +78,113 @@ class Session extends ChangeNotifier {
   // ====================================================================
   // 创建会话：NEW，得到自己的 qid，进入 waitingForPeer
   // ====================================================================
-  Future<bool> createSession({String server = 'localhost:8080'}) async {
-    final (host, port) = _parseAddr(server);
-    advHost = host;
-    advPort = port;
+  // Future<bool> createSession({String server = 'localhost:8080'}) async {
+  //   final (host, port) = _parseAddr(server);
+  //   advHost = host;
+  //   advPort = port;
 
-    _setPhase(SessionPhase.connecting);
-    try {
-      await _connect(host, port);
-      final resp = await _request(Envelope(type: kTypeNew));
-      if (resp.type == kTypeError) {
-        final err = ErrorPayload.fromMap(resp.payload);
-        throw Exception('服务器拒绝 NEW：${err.message}');
-      }
-      myQid = NewOkPayload.fromMap(resp.payload).queueId;
-      peerStatus = PeerStatus.waiting;
-      _setPhase(SessionPhase.waitingForPeer);
-      return true;
-    } catch (e) {
-      errorMessage = e.toString();
-      _setPhase(SessionPhase.failed);
-      return false;
+  //   _setPhase(SessionPhase.connecting);
+  //   try {
+  //     await _connect(host, port);
+  //     final resp = await _request(Envelope(type: kTypeNew));
+  //     if (resp.type == kTypeError) {
+  //       final err = ErrorPayload.fromMap(resp.payload);
+  //       throw Exception('服务器拒绝 NEW：${err.message}');
+  //     }
+  //     myQid = NewOkPayload.fromMap(resp.payload).queueId;
+  //     peerStatus = PeerStatus.waiting;
+  //     _setPhase(SessionPhase.waitingForPeer);
+  //     return true;
+  //   } catch (e) {
+  //     errorMessage = e.toString();
+  //     _setPhase(SessionPhase.failed);
+  //     return false;
+  //   }
+  // }
+
+  // M2重构
+  Future<bool> createSession({String? server}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedHost = prefs.getString('adv_host');
+    final savedPort = prefs.getInt('adv_port') ?? 0;
+
+    String host;
+    int port;
+    if (server != null && server.isNotEmpty) {
+      (host, port) = _parseAddr(server);
+    } else if (savedHost != null && savedHost.isNotEmpty) {
+      host = savedHost; // 沿用上次的广播地址——隧道用户重启后还是隧道
+      port = savedPort;
+    } else {
+      (host, port) = _parseAddr('localhost:8080');
     }
+
+    if (!await _ensureIdentity(host, port)) return false;
+    if (!await _ensureConnected(host, port)) return false;
+
+    peerStatus = PeerStatus.waiting;
+    _setPhase(SessionPhase.waitingForPeer);
+    return true;
   }
 
   // ====================================================================
   // 订阅对方队列：SUB，成功后进入 chatting
   // 调用时机：用户在邀请页粘贴对方的邀请链接
   // ====================================================================
+  // Future<bool> subscribeToPeer(String peerLink) async {
+  //   final invite = Invite.tryParse(peerLink);
+  //   if (invite == null) {
+  //     errorMessage = '邀请链接不合法';
+  //     return false;
+  //   }
+
+  //   //新增：不能订阅自己的队列
+  //   if (myQid != null && invite.queueId == myQid) {
+  //     errorMessage = '这个是你自己的邀请链接，请粘贴对方的';
+  //     return false;
+  //   }
+
+  //   // 如果还没连接（加入模式），先连接
+  //   if (_channel == null) {
+  //     advHost = invite.host;
+  //     advPort = invite.port;
+  //     _setPhase(SessionPhase.connecting);
+  //     try {
+  //       await _connect(invite.host, invite.port);
+  //       final resp = await _request(Envelope(type: kTypeNew));
+  //       if (resp.type == kTypeError) {
+  //         final err = ErrorPayload.fromMap(resp.payload);
+  //         throw Exception('创建队列失败：${err.message}');
+  //       }
+  //       myQid = NewOkPayload.fromMap(resp.payload).queueId;
+  //     } catch (e) {
+  //       errorMessage = e.toString();
+  //       _setPhase(SessionPhase.failed);
+  //       return false;
+  //     }
+  //   }
+
+  //   // 发送 SUB
+  //   try {
+  //     final resp = await _request(Envelope(
+  //       type: kTypeSub,
+  //       queueId: invite.queueId,
+  //     ));
+  //     if (resp.type == kTypeError) {
+  //       final err = ErrorPayload.fromMap(resp.payload);
+  //       errorMessage = err.message;
+  //       return false;
+  //     }
+  //     peerQid = invite.queueId;
+  //     peerStatus = PeerStatus.waiting;
+  //     _setPhase(SessionPhase.chatting);
+  //     return true;
+  //   } catch (e) {
+  //     errorMessage = e.toString();
+  //     return false;
+  //   }
+  // }
+
   Future<bool> subscribeToPeer(String peerLink) async {
     final invite = Invite.tryParse(peerLink);
     if (invite == null) {
@@ -112,41 +192,24 @@ class Session extends ChangeNotifier {
       return false;
     }
 
-    //新增：不能订阅自己的队列
-    if(myQid != null && invite.queueId == myQid){
+    // 先装载身份，再比较——顺序错了检查就是摆设
+    if (!await _ensureIdentity(invite.host, invite.port)) return false;
+    if (myQid != null && invite.queueId == myQid) {
       errorMessage = '这个是你自己的邀请链接，请粘贴对方的';
       return false;
     }
 
-    // 如果还没连接（加入模式），先连接
-    if (_channel == null) {
-      advHost = invite.host;
-      advPort = invite.port;
-      _setPhase(SessionPhase.connecting);
-      try {
-        await _connect(invite.host, invite.port);
-        final resp = await _request(Envelope(type: kTypeNew));
-        if (resp.type == kTypeError) {
-          final err = ErrorPayload.fromMap(resp.payload);
-          throw Exception('创建队列失败：${err.message}');
-        }
-        myQid = NewOkPayload.fromMap(resp.payload).queueId;
-      } catch (e) {
-        errorMessage = e.toString();
-        _setPhase(SessionPhase.failed);
-        return false;
-      }
-    }
+    // 服务器由对方链接决定；身份属于这台服务器则复用，否则 NEW
+    if (!await _ensureIdentity(invite.host, invite.port)) return false;
+    if (!await _ensureConnected(invite.host, invite.port)) return false;
 
-    // 发送 SUB
     try {
       final resp = await _request(Envelope(
         type: kTypeSub,
         queueId: invite.queueId,
       ));
       if (resp.type == kTypeError) {
-        final err = ErrorPayload.fromMap(resp.payload);
-        errorMessage = err.message;
+        errorMessage = ErrorPayload.fromMap(resp.payload).message;
         return false;
       }
       peerQid = invite.queueId;
@@ -189,21 +252,23 @@ class Session extends ChangeNotifier {
   // ====================================================================
   String get myInviteLink {
     if (myQid == null) return '';
-    return Invite(host: advHost, port: advPort, queueId: myQid!).toInviteString();
+    return Invite(host: advHost, port: advPort, queueId: myQid!)
+        .toInviteString();
   }
 
   // ====================================================================
   // 关闭会话
   // ====================================================================
   Future<void> close() async {
-    _pingTimer?.cancel();
-    _pingTimer = null;
-    await _sub?.cancel();
-    _sub = null;
-    try {
-      await _channel?.sink.close(ws_status.normalClosure);
-    } catch (_) {}
-    _channel = null;
+    // _pingTimer?.cancel();
+    // _pingTimer = null;
+    // await _sub?.cancel();
+    // _sub = null;
+    // try {
+    //   await _channel?.sink.close(ws_status.normalClosure);
+    // } catch (_) {}
+    // _channel = null;
+    await _teardownSocket();
     _setPhase(SessionPhase.closed);
   }
 
@@ -371,35 +436,62 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-void _handleAsyncError(Envelope env) {
+  void _handleAsyncError(Envelope env) async {
     final err = ErrorPayload.fromMap(env.payload);
     debugPrint('[knock] server error ${err.code}: ${err.message}');
 
-    if (err.code == kCodeNoSubscriber) {   // 503：对方离线
-        peerStatus = PeerStatus.offline;
-        _markLastMineFailed();
-        notifyListeners();
-        return;
+    if (err.code == kCodeNoSubscriber) {
+      // 503：对方离线
+      peerStatus = PeerStatus.offline;
+      _markLastMineFailed();
+      notifyListeners();
+      return;
     }
 
-    if (err.code == 403) {                 // 新增：协议使用错误
-        _markLastMineFailed();
-        errorMessage = '发送失败：${err.message}';
-        notifyListeners();
+    if (err.code == 403) {
+      // 新增：协议使用错误
+      _markLastMineFailed();
+      errorMessage = '发送失败：${err.message}';
+      notifyListeners();
     }
-}
+
+    if (err.code == kCodeQueueNotFound) {
+      // 只有"自己的队列"404 才触发身份恢复；SUB 不存在的对方队列是另一回事
+      if (env.queueId == myQid) {
+        await _recoverStaleIdentity();
+      } else {
+        _markLastMineFailed();
+        errorMessage = '对方队列不存在';
+      }
+      notifyListeners();
+      return;
+    }
+  }
+
+  /// 本机保存的 qid 在服务器上已不存在（换库/换服务器）→ 作废重建
+  Future<void> _recoverStaleIdentity() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('my_qid');
+    myQid = null;
+
+    final ok = await _ensureIdentity(advHost, advPort);
+    _markLastMineFailed();
+    errorMessage = ok ? '原队列已失效，已自动重建身份（旧链接作废，请重新分享）' : '身份恢复失败：$errorMessage';
+    notifyListeners();
+  }
 
 // 抽出辅助方法，标记最近一条自己发的消息为失败
-void _markLastMineFailed() {
+  void _markLastMineFailed() {
     for (var i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].isMine && !messages[i].failed) {
-            messages[i] = messages[i].copyWith(failed: true);
-            break;
-        }
+      if (messages[i].isMine && !messages[i].failed) {
+        messages[i] = messages[i].copyWith(failed: true);
+        break;
+      }
     }
-}
+  }
 
   void _onSocketError(Object err) {
+    _pingTimer?.cancel();
     debugPrint('[knock] socket error: $err');
     errorMessage = err.toString();
     if (phase != SessionPhase.idle && phase != SessionPhase.closed) {
@@ -408,9 +500,110 @@ void _markLastMineFailed() {
   }
 
   void _onSocketDone() {
+    _pingTimer?.cancel();
     debugPrint('[knock] socket closed');
     if (phase != SessionPhase.idle && phase != SessionPhase.closed) {
       _setPhase(SessionPhase.closed);
     }
   }
+
+  // === 身份持久化：qid 绑定服务器，重启后复活 ===
+
+  Future<void> _saveIdentity() async {
+    if (myQid == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('my_qid', myQid!);
+    await prefs.setString('adv_host', advHost);
+    await prefs.setInt('adv_port', advPort);
+  }
+
+  Future<void> _teardownSocket() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    await _sub?.cancel();
+    _sub = null;
+    try {
+      await _channel?.sink.close(ws_status.normalClosure);
+    } catch (_) {}
+    _channel = null;
+  }
+
+  Future<bool> _ensureConnected(String host, int port) async {
+    if (_channel != null && advHost == host && advPort == port) return true;
+    if (_channel != null) await _teardownSocket(); // 换服务器，先断旧连接
+    try {
+      await _connect(host, port);
+      return true;
+    } catch (e) {
+      errorMessage = '连接服务器失败：$e';
+      _setPhase(SessionPhase.failed);
+      return false;
+    }
+  }
+
+  /// 身份决策核心：本机保存过【这台服务器铸造的】qid 就复用（零网络请求），
+  /// 否则 NEW 新队列并保存。
+  Future<bool> _ensureIdentity(String host, int port) async {
+    // 内存里已有这台服务器的身份
+    if (myQid != null && advHost == host && advPort == port) return true;
+
+    final prefs = await SharedPreferences.getInstance();
+    final savedQid = prefs.getString('my_qid');
+    final savedHost = prefs.getString('adv_host');
+    final savedPort = prefs.getInt('adv_port') ?? 0;
+
+    if (savedQid != null &&
+        validQueueId(savedQid) &&
+        savedHost == host && // ★ 服务器匹配才复用
+        savedPort == port) {
+      myQid = savedQid;
+      advHost = host;
+      advPort = port;
+      return true; // 惰性复活：队列在服务器 DB 里，SUB/SEND 时自然生效
+    }
+
+    // 没有（或不匹配）→ NEW，先连上
+    if (!await _ensureConnected(host, port)) return false;
+    try {
+      final resp = await _request(Envelope(type: kTypeNew));
+      if (resp.type == kTypeError) {
+        final err = ErrorPayload.fromMap(resp.payload);
+        throw Exception('服务器拒绝 NEW：${err.message}');
+      }
+      myQid = NewOkPayload.fromMap(resp.payload).queueId;
+      advHost = host;
+      advPort = port;
+      await _saveIdentity();
+      return true;
+    } catch (e) {
+      errorMessage = e.toString();
+      _setPhase(SessionPhase.failed);
+      return false;
+    }
+  }
+
+/// 作废当前身份：断开连接、清除本地保存的 qid。
+/// 保留服务器地址设置（adv_host/adv_port）。
+/// 注意：服务器 DB 里的旧队列依然存在，会由 TTL 清理回收
+/// （M2 服务器没有"删除队列"的协议动作，见已知限制）。
+/// 调用后由 UI 导航回邀请流程，createSession 会自动铸造新身份。
+Future<void> resetIdentity() async {
+  // 1. 完整断开：可能在 chatting 中途触发
+  await _teardownSocket();
+  peerQid = null;
+  peerStatus = PeerStatus.unknown;
+  messages.clear();
+  _seenMids.clear();
+  errorMessage = null;
+
+  // 2. 清身份：只删 qid，不动服务器配置
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove('my_qid');
+  myQid = null;
+
+  // 3. 回到初始态（_setPhase 内部会 notifyListeners）
+  _setPhase(SessionPhase.idle);
+}
+
+
 }
