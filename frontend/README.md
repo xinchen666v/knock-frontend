@@ -1,19 +1,16 @@
-# knock
+# knock frontend
 
-A new Flutter project.
+knock 的 Windows 桌面客户端（Flutter）。项目总览、安全模型、协议细节、
+测试与分发说明见[根目录 README](../README.md)。
 
-## Getting Started
+## 常用命令
 
-This project is a starting point for a Flutter application.
+```powershell
+flutter pub get
+flutter run -d windows
+flutter test
+flutter build windows --release
+powershell -ExecutionPolicy Bypass -File .\scripts\package-windows.ps1
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
-客户端聊天记录仅存于内存（Session 单例），App 重启后消失；服务器仅补投未签收消息。本地历史持久化（如 SQLite/Drift）列为后续议题——注意若做，须与 M3 的 E2E 加密一并设计（密文存储 vs 明文存储是安全决策，不是存储选型）。
+普通使用不需要环境变量；同机 A/B 调试与服务器地址配置见根目录 README。

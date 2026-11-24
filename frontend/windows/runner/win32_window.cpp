@@ -16,6 +16,17 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+// Windows 11 supports custom caption colors; older SDKs lack these constants.
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -216,6 +227,10 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_SETTINGCHANGE:
+      UpdateTheme(hwnd);
+      return 0;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
@@ -284,5 +299,19 @@ void Win32Window::UpdateTheme(HWND const window) {
     BOOL enable_dark_mode = light_mode == 0;
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
+
+    // Match the app's blue-gray surface instead of the system accent tint.
+    COLORREF caption = enable_dark_mode ? RGB(0x0F, 0x13, 0x18)
+                                        : RGB(0xF7, 0xF8, 0xFB);
+    COLORREF caption_text = enable_dark_mode ? RGB(0xE6, 0xE9, 0xEE)
+                                             : RGB(0x1B, 0x1F, 0x24);
+    COLORREF border = enable_dark_mode ? RGB(0x2A, 0x31, 0x3A)
+                                       : RGB(0xD5, 0xDA, 0xE3);
+    DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR,
+                          &caption, sizeof(caption));
+    DwmSetWindowAttribute(window, DWMWA_TEXT_COLOR,
+                          &caption_text, sizeof(caption_text));
+    DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR,
+                          &border, sizeof(border));
   }
 }

@@ -1,15 +1,20 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../session/session.dart';
+import '../theme/app_theme.dart';
 
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final bool showTime;
+  final VoidCallback? onRetry;
 
   const MessageBubble({
     super.key,
     required this.message,
     required this.showTime,
+    this.onRetry,
   });
 
   @override
@@ -20,7 +25,13 @@ class MessageBubble extends StatelessWidget {
 
     return _EnterAnimated(
       key: ValueKey(bubbleKey),
-      child: _BubbleBody(message: message, showTime: showTime),
+      child: message.isSystem
+          ? _SystemNotice(message: message, showTime: showTime)
+          : _BubbleBody(
+              message: message,
+              showTime: showTime,
+              onRetry: onRetry,
+            ),
     );
   }
 }
@@ -28,6 +39,7 @@ class MessageBubble extends StatelessWidget {
 /// 单条消息的进入动画：淡入 + 从下方滑入
 class _EnterAnimated extends StatefulWidget {
   final Widget child;
+
   const _EnterAnimated({super.key, required this.child});
 
   @override
@@ -70,25 +82,27 @@ class _EnterAnimatedState extends State<_EnterAnimated>
   }
 }
 
-/// 气泡主体：时间分隔 + 气泡 + 失败提示
+/// 气泡主体：时间分隔 + 气泡 + 送达状态
 class _BubbleBody extends StatelessWidget {
   final ChatMessage message;
   final bool showTime;
+  final VoidCallback? onRetry;
 
-  const _BubbleBody({required this.message, required this.showTime});
+  const _BubbleBody({
+    required this.message,
+    required this.showTime,
+    this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.palette;
     final isMine = message.isMine;
+    final maxWidth = math.min(MediaQuery.sizeOf(context).width * 0.72, 520.0);
 
-    final bubbleColor = isMine
-        ? scheme.primaryContainer
-        : scheme.surfaceContainerHighest;
-    final textColor = isMine
-        ? scheme.onPrimaryContainer
-        : scheme.onSurfaceVariant;
+    final bubbleColor = isMine ? scheme.primaryContainer : palette.peerBubble;
+    final textColor = isMine ? scheme.onPrimaryContainer : palette.onPeerBubble;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -98,27 +112,30 @@ class _BubbleBody extends StatelessWidget {
           if (showTime) _TimeDivider(time: message.time),
           Align(
             alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.sizeOf(context).width * 0.68,
-              ),
-              child: Column(
-                crossAxisAlignment: isMine
-                    ? CrossAxisAlignment.end
-                    : CrossAxisAlignment.start,
-                children: [
-                  Container(
+            child: Column(
+              crossAxisAlignment:
+                  isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
                       color: bubbleColor,
+                      border: isMine
+                          ? null
+                          : Border.all(
+                              color:
+                                  scheme.outlineVariant.withValues(alpha: 0.45),
+                            ),
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(18),
                         topRight: const Radius.circular(18),
-                        bottomLeft: Radius.circular(isMine ? 18 : 4),
-                        bottomRight: Radius.circular(isMine ? 4 : 18),
+                        bottomLeft: Radius.circular(isMine ? 18 : 6),
+                        bottomRight: Radius.circular(isMine ? 6 : 18),
                       ),
                     ),
                     child: SelectableText(
@@ -130,30 +147,145 @@ class _BubbleBody extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (message.failed)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4, left: 6, right: 6),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 12,
-                            color: scheme.error,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '对方离线，消息未送达',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.error,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                ),
+                if (isMine) ...[
+                  const SizedBox(height: 3),
+                  _StatusRow(message: message, onRetry: onRetry),
                 ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusRow extends StatelessWidget {
+  final ChatMessage message;
+  final VoidCallback? onRetry;
+
+  const _StatusRow({required this.message, this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.palette;
+    final time = _hhmm(message.time);
+
+    if (message.failed) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onRetry,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 13, color: scheme.error),
+              const SizedBox(width: 4),
+              Text(
+                '未送达 · 点击重试',
+                style: TextStyle(fontSize: 10.5, color: scheme.error),
               ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final (icon, label, color) = switch (message.status) {
+      MessageStatus.sending => (
+          Icons.schedule,
+          '发送中',
+          scheme.outline,
+        ),
+      MessageStatus.sent => (
+          Icons.done,
+          '已送达',
+          scheme.outline,
+        ),
+      MessageStatus.read => (
+          Icons.done_all,
+          '已读',
+          palette.success,
+        ),
+      MessageStatus.failed => (
+          Icons.error_outline,
+          '发送失败',
+          scheme.error,
+        ),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            time,
+            style: TextStyle(fontSize: 10.5, color: scheme.outline),
+          ),
+          const SizedBox(width: 5),
+          Tooltip(
+            message: label,
+            child: Icon(icon, size: 13, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _hhmm(DateTime time) {
+    final h = time.hour.toString().padLeft(2, '0');
+    final m = time.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+}
+
+/// 系统提示：居中、低噪音
+class _SystemNotice extends StatelessWidget {
+  final ChatMessage message;
+  final bool showTime;
+
+  const _SystemNotice({required this.message, required this.showTime});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.palette;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        children: [
+          if (showTime) _TimeDivider(time: message.time),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: palette.systemBubble,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 13,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: palette.onSystemBubble,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -165,6 +297,7 @@ class _BubbleBody extends StatelessWidget {
 /// 时间分隔符：居中、淡色、小巧
 class _TimeDivider extends StatelessWidget {
   final DateTime time;
+
   const _TimeDivider({required this.time});
 
   @override
@@ -173,12 +306,19 @@ class _TimeDivider extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Center(
-        child: Text(
-          _formatTime(time),
-          style: TextStyle(
-            fontSize: 11,
-            color: scheme.outline,
-            letterSpacing: 0.5,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            _formatTime(time),
+            style: TextStyle(
+              fontSize: 10.5,
+              color: scheme.outline,
+              letterSpacing: 0.4,
+            ),
           ),
         ),
       ),
